@@ -45,7 +45,8 @@ def load_audio(
 
     Raises:
         FileNotFoundError: If *path* does not exist.
-        ValueError: If the file cannot be decoded as audio.
+        ValueError: If the file cannot be decoded as audio or if *target_sr*
+            is not a positive integer when provided.
         RuntimeError: For unexpected librosa/soundfile errors.
     """
     import librosa  # deferred so stubs import without heavy deps
@@ -55,6 +56,11 @@ def load_audio(
         raise FileNotFoundError(f"Audio file not found: {path}")
     if not path.is_file():
         raise ValueError(f"Path is not a file: {path}")
+
+    if target_sr is not None and target_sr <= 0:
+        raise ValueError(
+            f"target_sr must be a positive integer, got {target_sr}."
+        )
 
     try:
         audio, sr = librosa.load(
@@ -83,11 +89,12 @@ def write_audio(
     Supports WAV and FLAC output via soundfile.
 
     Args:
-        path: Destination file path. The parent directory must already exist.
+        path: Destination file path. Parent directories are created
+            automatically if they do not exist.
         audio: Float32 numpy array of shape ``(samples,)`` (mono) or
-            ``(channels, samples)`` (multi-channel).  The array will be
-            transposed if necessary so soundfile receives ``(samples,)`` or
-            ``(samples, channels)``.
+            ``(channels, samples)`` (multi-channel, librosa convention).
+            The array will be transposed if necessary so soundfile receives
+            ``(samples,)`` or ``(samples, channels)``.
         sample_rate: Sample rate in Hz.
         fmt: Output format string, either ``'WAV'`` or ``'FLAC'``. Case
             insensitive.
@@ -96,8 +103,8 @@ def write_audio(
             ``'PCM_16'`` for WAV and ``'PCM_24'`` for FLAC.
 
     Raises:
-        ValueError: If *fmt* is not ``'WAV'`` or ``'FLAC'``, or if
-            *sample_rate* is not positive.
+        ValueError: If *fmt* is not ``'WAV'`` or ``'FLAC'``, if
+            *sample_rate* is not positive, or if *audio* has an invalid shape.
         OSError: If the destination file cannot be written.
         RuntimeError: For unexpected soundfile errors.
     """
@@ -109,8 +116,10 @@ def write_audio(
         raise ValueError(
             f"Unsupported output format {fmt!r}. Choose 'WAV' or 'FLAC'."
         )
-    if sample_rate <= 0:
-        raise ValueError(f"sample_rate must be a positive integer, got {sample_rate}.")
+    if not isinstance(sample_rate, int) or sample_rate <= 0:
+        raise ValueError(
+            f"sample_rate must be a positive integer, got {sample_rate!r}."
+        )
 
     # Determine default subtype
     if subtype is None:
@@ -145,6 +154,51 @@ def get_supported_formats() -> list[str]:
     return ["WAV", "FLAC"]
 
 
+def get_audio_info(path: str | Path) -> dict[str, object]:
+    """Return basic metadata about an audio file without fully decoding it.
+
+    Uses soundfile for efficient header-only inspection.
+
+    Args:
+        path: Path to the audio file.
+
+    Returns:
+        A dictionary with keys:
+
+        - ``'sample_rate'`` (int): Sample rate in Hz.
+        - ``'channels'`` (int): Number of audio channels.
+        - ``'frames'`` (int): Total number of sample frames.
+        - ``'duration'`` (float): Duration in seconds.
+        - ``'format'`` (str): File format string (e.g. ``'WAV'``).
+        - ``'subtype'`` (str): PCM subtype string (e.g. ``'PCM_16'``).
+
+    Raises:
+        FileNotFoundError: If *path* does not exist.
+        RuntimeError: If soundfile cannot read the file headers.
+    """
+    import soundfile as sf
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Audio file not found: {path}")
+
+    try:
+        info = sf.info(str(path))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to read audio info from {path}: {exc}"
+        ) from exc
+
+    return {
+        "sample_rate": info.samplerate,
+        "channels": info.channels,
+        "frames": info.frames,
+        "duration": info.duration,
+        "format": info.format,
+        "subtype": info.subtype,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
@@ -158,29 +212,33 @@ def _prepare_array_for_write(audio: np.ndarray) -> np.ndarray:
       - 2-D array for multi-channel: shape ``(samples, channels)``
 
     librosa returns multi-channel audio as ``(channels, samples)``, so we
-    need to transpose.
+    need to transpose when the first dimension is smaller than the second
+    (heuristic for channels < samples).
 
     Args:
         audio: Input numpy array.
 
     Returns:
-        Array ready for ``soundfile.write``.
+        Array ready for ``soundfile.write``, dtype float32.
 
     Raises:
-        ValueError: If *audio* has more than 2 dimensions.
+        ValueError: If *audio* has more than 2 dimensions or is empty.
     """
+    if not isinstance(audio, np.ndarray):
+        raise ValueError(
+            f"audio must be a numpy ndarray, got {type(audio).__name__}."
+        )
+    if audio.size == 0:
+        raise ValueError("audio array must not be empty.")
     if audio.ndim == 1:
-        return audio.astype(np.float32)
+        return audio.astype(np.float32, copy=False)
     if audio.ndim == 2:
-        # Decide orientation: if shape is (channels, samples) librosa-style,
-        # transpose to (samples, channels). We heuristically assume that the
-        # larger dimension is 'samples'.
         rows, cols = audio.shape
         if rows < cols:
-            # (channels, samples) -> (samples, channels)
-            return audio.T.astype(np.float32)
-        # Already (samples, channels)
-        return audio.astype(np.float32)
+            # Assume (channels, samples) librosa layout -> transpose
+            return audio.T.astype(np.float32, copy=False)
+        # Already (samples, channels) or square — pass through
+        return audio.astype(np.float32, copy=False)
     raise ValueError(
         f"audio array must be 1-D or 2-D, got shape {audio.shape}."
     )

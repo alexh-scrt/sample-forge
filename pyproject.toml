@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "sample_forge"
+version = "0.1.0"
+description = "Offline time-stretching and pitch-shifting CLI tool for music producers."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["audio", "music", "bpm", "pitch", "time-stretch", "cli"]
+authors = [
+  { name = "sample_forge contributors" }
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Multimedia :: Sound/Audio",
+  "Topic :: Utilities",
+]
+dependencies = [
+  "librosa>=0.10",
+  "pyrubberband>=0.3",
+  "soundfile>=0.12",
+  "numpy>=1.24",
+  "click>=8.1",
+]
+
+[project.scripts]
+sample-forge = "sample_forge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sample_forge*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
